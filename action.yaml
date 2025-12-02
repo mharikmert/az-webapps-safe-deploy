@@ -87,6 +87,16 @@ inputs:
     required: false
     default: "patch"
 
+  release_branches:
+    description: "Branches to release on (github-tag-action)."
+    required: false
+    default: "master"
+
+  pre_release_branches:
+    description: "Branches to pre-release on (github-tag-action)."
+    required: false
+    default: "test"
+
   # Slot & healthcheck URLs
   slot_name:
     description: 'Slot to deploy to (e.g. "test" or "staging").'
@@ -202,8 +212,8 @@ runs:
         github_token: ${{ inputs.github_token }}
         default_bump: ${{ steps.version-params.outputs.default_bump }}
         dry_run: true
-        release_branches: master
-        pre_release_branches: test
+        release_branches: ${{ inputs.release_branches }}
+        pre_release_branches: ${{ inputs.pre_release_branches }}
 
     - name: Set APP_VERSION
       id: set-app-version
@@ -295,8 +305,8 @@ runs:
       with:
         github_token: ${{ inputs.github_token }}
         default_bump: ${{ inputs.prod_default_bump }}
-        release_branches: master
-        pre_release_branches: test
+        release_branches: ${{ inputs.release_branches }}
+        pre_release_branches: ${{ inputs.pre_release_branches }}
 
     - name: Create GitHub release
       id: do_release
