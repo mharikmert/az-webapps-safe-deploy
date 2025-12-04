@@ -1,9 +1,9 @@
 name: "Build & Deploy Node.js App to Azure App Service"
 description: >
   Opinionated Node.js build & deploy for Azure App Service with two modes:
-  - mode=pre-prod: dry-run semver, APP_VERSION=<version>-rc, deploy to given slot, healthcheck only.
-  - mode=prod:    dry-run semver, APP_VERSION=<version>, deploy to staging-like slot, healthcheck, swap to target slot, healthcheck again.
-  Optionally creates a tag & GitHub release in prod mode when release=true.
+  - mode=non-prod: dry-run semver, APP_VERSION=<version>-rc, deploy to given slot, health check only.
+  - mode=prod:     dry-run semver, APP_VERSION=<version>, deploy to staging-like slot, health check, swap to target slot, health check again.
+  Supports "code" and "container" publishing models.
 author: "mharikmert"
 branding:
   color: "blue"
@@ -11,8 +11,13 @@ branding:
 
 inputs:
   mode:
-    description: '"pre-prod" or "prod". Controls how versioning, deploy and swap behave.'
+    description: '"non-prod" or "prod". Controls how versioning, deploy and swap behave.'
     required: true
+
+  publishing_model:
+    description: '"code" or "container". Controls how deployment is done.'
+    required: false
+    default: "code"
 
   github_token:
     description: "GitHub token for versioning and (optionally) releases (usually secrets.GITHUB_TOKEN)."
@@ -67,18 +72,18 @@ inputs:
     default: "false"
 
   package_path:
-    description: 'Path to deploy (folder or zip). Defaults to repo root ".".'
+    description: 'Path to deploy for "code" model (folder or zip). Defaults to repo root ".".'
     required: false
     default: "."
 
   # Versioning behavior per mode (sane defaults, but overridable)
-  preprod_default_bump:
-    description: "default_bump for pre-prod mode (github-tag-action)."
+  non_prod_default_bump:
+    description: "default_bump for non-prod mode (github-tag-action)."
     required: false
     default: "false"
 
-  preprod_suffix:
-    description: 'Suffix for APP_VERSION in pre-prod mode (e.g. "-rc").'
+  non_prod_suffix:
+    description: 'Suffix for APP_VERSION in non-prod mode (e.g. "-rc").'
     required: false
     default: "-rc"
 
@@ -113,13 +118,44 @@ inputs:
     required: false
     default: "false"
 
+  # Container deployment options (used when publishing_model=container)
+  container_registry:
+    description: "Container registry URL (e.g. myregistry.azurecr.io)."
+    required: false
+    default: ""
+
+  container_repository:
+    description: "Container repository name (e.g. app-repository)."
+    required: false
+    default: ""
+
+  container_registry_username:
+    description: "Username for the container registry (if required)."
+    required: false
+    default: ""
+
+  container_registry_password:
+    description: "Password or token for the container registry."
+    required: false
+    default: ""
+
+  docker_build_context:
+    description: "Docker build context directory."
+    required: false
+    default: "."
+
+  dockerfile:
+    description: "Path to Dockerfile relative to the repo root."
+    required: false
+    default: "./Dockerfile"
+
 outputs:
   next_version:
     description: "Next semantic version (dry-run) used for APP_VERSION."
     value: ${{ steps.set-app-version.outputs.next_version }}
 
   app_version:
-    description: "Computed APP_VERSION value (with suffix in pre-prod)."
+    description: "Computed APP_VERSION value (with suffix in non-prod)."
     value: ${{ steps.set-app-version.outputs.app_version }}
 
   release_tag:
@@ -129,118 +165,182 @@ outputs:
 runs:
   using: "composite"
   steps:
-    - name: Calculate total steps
-      id: calc-steps
+    - name: Init step counters
       shell: bash
       run: |
-        # Count only steps that display step numbers in their output
-        TOTAL=1  # Validate mode
-        TOTAL=$((TOTAL + 1))  # Set base env vars
-        TOTAL=$((TOTAL + 1))  # Install dependencies
+        TOTAL=0
+
+        # Always-run phases
+        TOTAL=$((TOTAL + 1)) # Validate mode & publishing model
+        TOTAL=$((TOTAL + 1)) # Checkout repository
+        TOTAL=$((TOTAL + 1)) # Setup Node.js
+        TOTAL=$((TOTAL + 1)) # Install dependencies
+
+        # Optional tests
         if [ "${{ inputs.run_tests }}" = "true" ]; then
-          TOTAL=$((TOTAL + 1))  # Run tests
+          TOTAL=$((TOTAL + 1)) # Run tests
         fi
-        if [ -n "${{ inputs.build_command }}" ]; then
-          TOTAL=$((TOTAL + 1))  # Build app
-        fi
-        TOTAL=$((TOTAL + 1))  # Determine version parameters
-        TOTAL=$((TOTAL + 1))  # Compute version (dry-run) echo
-        TOTAL=$((TOTAL + 1))  # Set APP_VERSION
-        TOTAL=$((TOTAL + 1))  # Azure Login (Log step)
-        TOTAL=$((TOTAL + 1))  # Deploy to slot (Log step)
-        TOTAL=$((TOTAL + 1))  # Set APP_VERSION on slot
-        TOTAL=$((TOTAL + 1))  # Resolve slot health check URL
-        TOTAL=$((TOTAL + 1))  # Health check slot
-        if [ "${{ inputs.mode }}" = "prod" ]; then
-          TOTAL=$((TOTAL + 1))  # Swap slot -> target
-          TOTAL=$((TOTAL + 1))  # Resolve production health check URL
-          TOTAL=$((TOTAL + 1))  # Health check production after swap
-        fi
-        if [ "${{ inputs.mode }}" = "prod" ] && [ "${{ inputs.release }}" = "true" ]; then
-          TOTAL=$((TOTAL + 1))  # Tag version echo
-          TOTAL=$((TOTAL + 1))  # Create GitHub release echo
-        fi
-        echo "total_steps=${TOTAL}" >> $GITHUB_OUTPUT
-        echo "STEP_COUNTER=0" >> $GITHUB_ENV
-        echo "TOTAL_STEPS=${TOTAL}" >> $GITHUB_ENV
 
-    - name: Validate mode
+        # Optional build
+        if [ "${{ inputs.build_command }}" != "" ]; then
+          TOTAL=$((TOTAL + 1)) # Build app
+        fi
+
+        # Versioning
+        TOTAL=$((TOTAL + 1)) # Determine version parameters
+        TOTAL=$((TOTAL + 1)) # Compute version (dry-run)
+        TOTAL=$((TOTAL + 1)) # Set APP_VERSION
+
+        # Azure login
+        TOTAL=$((TOTAL + 1)) # Azure Login
+
+        # Deployment path depends on publishing_model
+        if [ "${{ inputs.publishing_model }}" = "code" ]; then
+          TOTAL=$((TOTAL + 1)) # Deploy to slot (code)
+        else
+          TOTAL=$((TOTAL + 1)) # Login to container registry
+          TOTAL=$((TOTAL + 1)) # Build & push container image
+          TOTAL=$((TOTAL + 1)) # Configure web app to use container image
+        fi
+
+        # App settings & health for slot
+        TOTAL=$((TOTAL + 1)) # Set APP_VERSION on slot
+        TOTAL=$((TOTAL + 1)) # Resolve slot health check URL
+        TOTAL=$((TOTAL + 1)) # Health check slot
+
+        # Prod-only flow
+        if [ "${{ inputs.mode }}" = "prod" ]; then
+          TOTAL=$((TOTAL + 1)) # Swap slot -> target
+          TOTAL=$((TOTAL + 1)) # Resolve production health check URL
+          TOTAL=$((TOTAL + 1)) # Health check production after swap
+
+          # Optional release
+          if [ "${{ inputs.release }}" = "true" ]; then
+            TOTAL=$((TOTAL + 1)) # Bump version and push tag
+            TOTAL=$((TOTAL + 1)) # Create GitHub release
+          fi
+        fi
+
+        echo "TOTAL_STEPS=$TOTAL" >> "$GITHUB_ENV"
+        echo "STEP_COUNTER=0" >> "$GITHUB_ENV"
+
+    - name: Banner - Validate mode & publishing model
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Validate mode & publishing model"
+
+    - name: Validate mode & publishing model
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Validating mode"
         echo "Mode: '${{ inputs.mode }}'"
+        echo "Publishing model: '${{ inputs.publishing_model }}'"
 
-        if [ "${{ inputs.mode }}" != "pre-prod" ] && [ "${{ inputs.mode }}" != "prod" ]; then
-          echo "❌ Invalid mode '${{ inputs.mode }}'. Expected 'pre-prod' or 'prod'."
+        if [ "${{ inputs.mode }}" != "non-prod" ] && [ "${{ inputs.mode }}" != "prod" ]; then
+          echo "❌ Invalid mode '${{ inputs.mode }}'. Expected 'non-prod' or 'prod'."
           exit 1
         fi
+
+        if [ "${{ inputs.publishing_model }}" != "code" ] && [ "${{ inputs.publishing_model }}" != "container" ]; then
+          echo "❌ Invalid publishing_model '${{ inputs.publishing_model }}'. Expected 'code' or 'container'."
+          exit 1
+        fi
+
+        if [ "${{ inputs.publishing_model }}" = "container" ]; then
+          if [ -z "${{ inputs.container_registry }}" ] || [ -z "${{ inputs.container_repository }}" ]; then
+            echo "❌ For publishing_model=container, container_registry and container_repository must be provided."
+            exit 1
+          fi
+        fi
+
+    - name: Banner - Checkout repository
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Checkout repository"
 
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
+    - name: Banner - Set base env vars
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Set base env vars"
+
     - name: Set base env vars
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Setting base environment variables"
         echo "NODE_ENV=${{ inputs.node_env }}" >> $GITHUB_ENV
         echo "CI=${{ inputs.ci_env }}" >> $GITHUB_ENV
+
+    - name: Banner - Setup Node.js
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Setup Node.js"
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node_version }}
 
+    - name: Banner - Install dependencies
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Install dependencies"
+
     - name: Install dependencies
       shell: bash
       run: |
         set -e
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Installing dependencies"
         if [ -n "${{ inputs.install_command }}" ]; then
           echo "Running install command: ${{ inputs.install_command }}"
           ${{ inputs.install_command }}
         else
-          echo "No install command specified, skipping."
+          echo "No install command specified, skipping dependency install."
         fi
+
+    - name: Banner - Run tests
+      if: ${{ inputs.run_tests == 'true' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Run tests"
 
     - name: Run tests
       if: ${{ inputs.run_tests == 'true' }}
       shell: bash
       run: |
         set -e
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Running tests"
         echo "Running test command: ${{ inputs.test_command }}"
         ${{ inputs.test_command }}
+
+    - name: Banner - Build app
+      if: ${{ inputs.build_command != '' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Build app"
 
     - name: Build app
       if: ${{ inputs.build_command != '' }}
       shell: bash
       run: |
         set -e
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Running build"
         echo "Running build command: ${{ inputs.build_command }}"
         ${{ inputs.build_command }}
 
     # --- Version parameters based on mode ---
 
+    - name: Banner - Determine version parameters
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Determine version parameters"
+
     - name: Determine version parameters
       id: version-params
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Determining version parameters"
-        if [ "${{ inputs.mode }}" = "pre-prod" ]; then
-          echo "default_bump=${{ inputs.preprod_default_bump }}" >> $GITHUB_OUTPUT
-          echo "suffix=${{ inputs.preprod_suffix }}" >> $GITHUB_OUTPUT
+        if [ "${{ inputs.mode }}" = "non-prod" ]; then
+          echo "default_bump=${{ inputs.non_prod_default_bump }}" >> $GITHUB_OUTPUT
+          echo "suffix=${{ inputs.non_prod_suffix }}" >> $GITHUB_OUTPUT
         else
           echo "default_bump=${{ inputs.prod_default_bump }}" >> $GITHUB_OUTPUT
           echo "suffix=" >> $GITHUB_OUTPUT
         fi
 
-    - name: Compute version (dry-run)
+    - name: Banner - Compute version (dry-run)
       shell: bash
-      run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Computing version (dry-run)"
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Compute version (dry-run)"
 
     - name: Compute version (dry-run)
       id: compute-version
@@ -252,6 +352,10 @@ runs:
         release_branches: ${{ inputs.release_branches }}
         pre_release_branches: ${{ inputs.pre_release_branches }}
 
+    - name: Banner - Set APP_VERSION
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Set APP_VERSION"
+
     - name: Set APP_VERSION
       id: set-app-version
       shell: bash
@@ -260,8 +364,6 @@ runs:
         SUFFIX: ${{ steps.version-params.outputs.suffix }}
       run: |
         set -e
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Setting APP_VERSION"
-
         if [ -z "$NEW_VERSION" ]; then
           echo "❌ Could not determine NEW_VERSION from github-tag-action outputs."
           exit 1
@@ -277,51 +379,114 @@ runs:
 
         echo "APP_VERSION=${APP_VERSION}" >> $GITHUB_ENV
 
-    # --- Azure Login (Service Principal) ---
+    # --- Azure login (needed for both code & container models) ---
 
-    - name: Azure Login (Log step)
+    - name: Banner - Azure Login
       shell: bash
-      run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Azure Login (Service Principal)"
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Azure Login"
 
-    - name: Azure Login (Azure App Service Login)
+    - name: Azure Login
       uses: azure/login@v2
       with:
         creds: ${{ inputs.azure_credentials }}
 
-    # --- Azure App Service Deployment (Deploy to slot) ---
+    # --- Code publishing model: zip deploy to slot ---
 
-    - name: Deploy to slot (Log step)
+    - name: Banner - Deploy to slot (code)
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
-      run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Azure App Service Deployment => ${{ inputs.webapp_name }} (slot: ${{ inputs.slot_name }})"
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Deploy to slot (code)"
 
-    - name: Deploy to slot (Azure App Service Deployment)
+    - name: Deploy to slot (code)
+      if: ${{ inputs.publishing_model == 'code' }}
       uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ inputs.webapp_name }}
         slot-name: ${{ inputs.slot_name }}
         package: ${{ inputs.package_path }}
 
+    # --- Container publishing model: login, build & push, deploy container image ---
+
+    - name: Banner - Login to container registry
+      if: ${{ inputs.publishing_model == 'container' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Login to container registry"
+
+    - name: Login to container registry
+      if: ${{ inputs.publishing_model == 'container' }}
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.container_registry }}
+        username: ${{ inputs.container_registry_username }}
+        password: ${{ inputs.container_registry_password }}
+
+    - name: Banner - Set up Docker Buildx
+      if: ${{ inputs.publishing_model == 'container' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Set up Docker Buildx"
+
+    - name: Set up Docker Buildx
+      if: ${{ inputs.publishing_model == 'container' }}
+      uses: docker/setup-buildx-action@v3
+
+    - name: Banner - Build & push container image
+      if: ${{ inputs.publishing_model == 'container' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Build & push container image"
+
+    - name: Build & push container image
+      if: ${{ inputs.publishing_model == 'container' }}
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.docker_build_context }}
+        file: ${{ inputs.dockerfile }}
+        push: true
+        tags: |
+          ${{ inputs.container_registry }}/${{ inputs.container_repository }}:latest
+          ${{ inputs.container_registry }}/${{ inputs.container_repository }}:${{ steps.set-app-version.outputs.app_version }}
+
+    - name: Banner - Deploy container image to slot
+      if: ${{ inputs.publishing_model == 'container' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Deploy container image to slot"
+
+    - name: Deploy container image to slot
+      if: ${{ inputs.publishing_model == 'container' }}
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ inputs.webapp_name }}
+        slot-name: ${{ inputs.slot_name }}
+        images: |
+          ${{ inputs.container_registry }}/${{ inputs.container_repository }}:latest
+          ${{ inputs.container_registry }}/${{ inputs.container_repository }}:${{ steps.set-app-version.outputs.app_version }}
+
+    # --- Set APP_VERSION app setting (both models) ---
+
+    - name: Banner - Set APP_VERSION on slot
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Set APP_VERSION on slot"
+
     - name: Set APP_VERSION on slot
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Setting APP_VERSION on slot"
-
+        echo "Setting APP_VERSION='${APP_VERSION}' on slot '${{ inputs.slot_name }}'..."
         az webapp config appsettings set \
           --resource-group "${{ inputs.resource_group }}" \
           --name "${{ inputs.webapp_name }}" \
           --slot "${{ inputs.slot_name }}" \
           --settings APP_VERSION="${APP_VERSION}"
 
-    # --- Resolve URLs for health checks ---
+    # --- Resolve slot URL & health check ---
+
+    - name: Banner - Resolve slot health check URL
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Resolve slot health check URL"
 
     - name: Resolve slot health check URL
       id: resolve-slot-url
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Resolving slot health check URL"
-
+        echo "Resolving defaultHostName for slot '${{ inputs.slot_name }}'..."
         HOST=$(az webapp show \
           --resource-group "${{ inputs.resource_group }}" \
           --name "${{ inputs.webapp_name }}" \
@@ -337,24 +502,31 @@ runs:
         echo "Resolved slot URL: $URL"
         echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-    # --- Health check slot ---
+    - name: Banner - Health check slot
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Health check slot"
 
     - name: Health check slot
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Running slot health check"
-
         URL="${{ steps.resolve-slot-url.outputs.url }}"
-        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 20 15 "slot (${{ inputs.slot_name }})"
+        echo "Running slot health check for $URL"
+        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 20 15 "slot (${{
+          inputs.slot_name
+        }})"
 
     # --- Slot swap & prod health (prod mode only) ---
+
+    - name: Banner - Swap slot -> target (prod mode only)
+      if: ${{ inputs.mode == 'prod' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Swap slot -> target (prod mode only)"
 
     - name: Swap slot -> target (prod mode only)
       if: ${{ inputs.mode == 'prod' }}
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Swapping '${{ inputs.slot_name }}' -> '${{ inputs.swap_target_slot }}'"
-
+        echo "Swapping slot '${{ inputs.slot_name }}' -> '${{ inputs.swap_target_slot }}'..."
         az webapp deployment slot swap \
           --resource-group "${{ inputs.resource_group }}" \
           --name "${{ inputs.webapp_name }}" \
@@ -362,21 +534,25 @@ runs:
           --target-slot "${{ inputs.swap_target_slot }}"
         echo "Slot swap completed."
 
+    - name: Banner - Resolve production health check URL
+      id: banner-resolve-prod-url
+      if: ${{ inputs.mode == 'prod' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Resolve production health check URL"
+
     - name: Resolve production health check URL
       id: resolve-prod-url
       if: ${{ inputs.mode == 'prod' }}
       shell: bash
       run: |
         if [ "${{ inputs.swap_target_slot }}" = "production" ]; then
-          bash "${{ github.action_path }}/scripts/step_banner.sh" "Resolving production URL without --slot"
-
+          echo "Resolving production URL without --slot..."
           HOST=$(az webapp show \
             --resource-group "${{ inputs.resource_group }}" \
             --name "${{ inputs.webapp_name }}" \
             --query "defaultHostName" -o tsv)
         else
-          bash "${{ github.action_path }}/scripts/step_banner.sh" "Resolving URL for target slot '${{ inputs.swap_target_slot }}'"
-
+          echo "Resolving URL for target slot '${{ inputs.swap_target_slot }}'..."
           HOST=$(az webapp show \
             --resource-group "${{ inputs.resource_group }}" \
             --name "${{ inputs.webapp_name }}" \
@@ -393,25 +569,27 @@ runs:
         echo "Resolved production URL: $URL"
         echo "url=$URL" >> "$GITHUB_OUTPUT"
 
+    - name: Banner - Health check production after swap
+      if: ${{ inputs.mode == 'prod' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Health check production after swap"
+
     - name: Health check production after swap
       if: ${{ inputs.mode == 'prod' }}
       shell: bash
       run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Running production health check"
-
         URL="${{ steps.resolve-prod-url.outputs.url }}"
         echo "Running production health check for $URL"
         bash "${{ github.action_path }}/scripts/health.sh" "$URL" 10 15 "production after swap"
 
     # --- Optional release in prod mode ---
 
-    - name: Tag version
+    - name: Banner - Bump version and push tag (release)
       if: ${{ inputs.mode == 'prod' && inputs.release == 'true' }}
       shell: bash
-      run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Tagging version"
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Bump version and push tag (release)"
 
-    - name: Tag version
+    - name: Bump version and push tag (release)
       id: tag_version
       if: ${{ inputs.mode == 'prod' && inputs.release == 'true' }}
       uses: mathieudutour/github-tag-action@v6.2
@@ -421,11 +599,10 @@ runs:
         release_branches: ${{ inputs.release_branches }}
         pre_release_branches: ${{ inputs.pre_release_branches }}
 
-    - name: Create GitHub release
+    - name: Banner - Create GitHub release
       if: ${{ inputs.mode == 'prod' && inputs.release == 'true' }}
       shell: bash
-      run: |
-        bash "${{ github.action_path }}/scripts/step_banner.sh" "Creating GitHub release"
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Create GitHub release"
 
     - name: Create GitHub release
       id: do_release

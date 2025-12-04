@@ -4,7 +4,7 @@ GitHub Action to **build** a Node.js app and **deploy** it to **Azure App Servic
 
 It supports two modes:
 
-- `mode: pre-prod`
+- `mode: non-prod`
   - Runs semver **dry-run** via `mathieudutour/github-tag-action`
   - Sets `APP_VERSION = <version>-rc` (suffix configurable)
   - Deploys to a given slot (e.g. `test`)
@@ -19,7 +19,7 @@ It supports two modes:
   - Health-checks the production URL
   - Optionally bumps version, pushes a Git tag and creates a GitHub Release
 
-> Designed for **Node.js apps running on Azure App Service (code)** in a “pre-prod → prod” slot deployment model.
+> Designed for **Node.js apps running on Azure App Service (code)** in a “non-prod → prod” slot deployment model.
 
 ---
 
@@ -56,7 +56,7 @@ steps:
   - name: Build & Deploy
     uses: mharikmert/azure-app-service-build-deploy@v1
     with:
-      mode: pre-prod
+      mode: non-prod
       github_token: ${{ secrets.GITHUB_TOKEN }}
       azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
       resource_group: ${{ secrets.RESOURCE_GROUP }}
