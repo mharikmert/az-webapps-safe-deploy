@@ -35,39 +35,39 @@ inputs:
     description: "Azure App Service name."
     required: true
 
-  # Node / build
+  # Node / build (only used when publishing_model=code)
   node_version:
-    description: "Node.js version to use."
+    description: "Node.js version to use (only for code model)."
     required: false
     default: "22.x"
 
   install_command:
-    description: "Command to install dependencies."
+    description: "Command to install dependencies (only for code model)."
     required: false
     default: "npm ci"
 
   run_tests:
-    description: "If true, run tests before build."
+    description: "If true, run tests before build (only for code model)."
     required: false
     default: "false"
 
   test_command:
-    description: "Test command to run when run_tests is true."
+    description: "Test command to run when run_tests is true (only for code model)."
     required: false
     default: "npm test"
 
   build_command:
-    description: "Build command (leave empty if no build step is needed)."
+    description: "Build command (leave empty if no build step is needed, only for code model)."
     required: false
     default: ""
 
   node_env:
-    description: "NODE_ENV to set during build."
+    description: "NODE_ENV to set during build (only for code model)."
     required: false
     default: "production"
 
   ci_env:
-    description: "Value for CI env var."
+    description: "Value for CI env var (only for code model)."
     required: false
     default: "false"
 
@@ -173,17 +173,22 @@ runs:
         # Always-run phases
         TOTAL=$((TOTAL + 1)) # Validate mode & publishing model
         TOTAL=$((TOTAL + 1)) # Checkout repository
-        TOTAL=$((TOTAL + 1)) # Setup Node.js
-        TOTAL=$((TOTAL + 1)) # Install dependencies
 
-        # Optional tests
-        if [ "${{ inputs.run_tests }}" = "true" ]; then
-          TOTAL=$((TOTAL + 1)) # Run tests
-        fi
+        # Node.js steps only for code model
+        if [ "${{ inputs.publishing_model }}" = "code" ]; then
+          TOTAL=$((TOTAL + 1)) # Set base env vars
+          TOTAL=$((TOTAL + 1)) # Setup Node.js
+          TOTAL=$((TOTAL + 1)) # Install dependencies
 
-        # Optional build
-        if [ "${{ inputs.build_command }}" != "" ]; then
-          TOTAL=$((TOTAL + 1)) # Build app
+          # Optional tests
+          if [ "${{ inputs.run_tests }}" = "true" ]; then
+            TOTAL=$((TOTAL + 1)) # Run tests
+          fi
+
+          # Optional build
+          if [ "${{ inputs.build_command }}" != "" ]; then
+            TOTAL=$((TOTAL + 1)) # Build app
+          fi
         fi
 
         # Versioning
@@ -261,29 +266,35 @@ runs:
         fetch-depth: 0
 
     - name: Banner - Set base env vars
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
       run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Set base env vars"
 
     - name: Set base env vars
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
       run: |
         echo "NODE_ENV=${{ inputs.node_env }}" >> $GITHUB_ENV
         echo "CI=${{ inputs.ci_env }}" >> $GITHUB_ENV
 
     - name: Banner - Setup Node.js
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
       run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Setup Node.js"
 
     - name: Setup Node.js
+      if: ${{ inputs.publishing_model == 'code' }}
       uses: actions/setup-node@v4
       with:
         node-version: ${{ inputs.node_version }}
 
     - name: Banner - Install dependencies
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
       run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Install dependencies"
 
     - name: Install dependencies
+      if: ${{ inputs.publishing_model == 'code' }}
       shell: bash
       run: |
         set -e
@@ -295,12 +306,12 @@ runs:
         fi
 
     - name: Banner - Run tests
-      if: ${{ inputs.run_tests == 'true' }}
+      if: ${{ inputs.publishing_model == 'code' && inputs.run_tests == 'true' }}
       shell: bash
       run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Run tests"
 
     - name: Run tests
-      if: ${{ inputs.run_tests == 'true' }}
+      if: ${{ inputs.publishing_model == 'code' && inputs.run_tests == 'true' }}
       shell: bash
       run: |
         set -e
@@ -308,12 +319,12 @@ runs:
         ${{ inputs.test_command }}
 
     - name: Banner - Build app
-      if: ${{ inputs.build_command != '' }}
+      if: ${{ inputs.publishing_model == 'code' && inputs.build_command != '' }}
       shell: bash
       run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Build app"
 
     - name: Build app
-      if: ${{ inputs.build_command != '' }}
+      if: ${{ inputs.publishing_model == 'code' && inputs.build_command != '' }}
       shell: bash
       run: |
         set -e
