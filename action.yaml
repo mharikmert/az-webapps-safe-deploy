@@ -102,6 +102,11 @@ inputs:
     required: false
     default: "test"
 
+  version_check_path:
+    description: 'Optional path for version-aware health check (e.g. "/" or "/app/version-info"). If empty, only HTTP status is checked.'
+    required: false
+    default: "/"
+
   # Slots & swapping
   slot_name:
     description: 'Slot to deploy to (e.g. "test" or "staging").'
@@ -204,14 +209,21 @@ runs:
           TOTAL=$((TOTAL + 1)) # Deploy to slot (code)
         else
           TOTAL=$((TOTAL + 1)) # Login to container registry
+          TOTAL=$((TOTAL + 1)) # Set up Docker Buildx
           TOTAL=$((TOTAL + 1)) # Build & push container image
-          TOTAL=$((TOTAL + 1)) # Configure web app to use container image
+          TOTAL=$((TOTAL + 1)) # Deploy container image to slot
         fi
 
         # App settings & health for slot
         TOTAL=$((TOTAL + 1)) # Set APP_VERSION on slot
         TOTAL=$((TOTAL + 1)) # Resolve slot health check URL
         TOTAL=$((TOTAL + 1)) # Health check slot
+
+        # Non-prod pre-release tag push
+        if [ "${{ inputs.mode }}" = "non-prod" ]; then
+          TOTAL=$((TOTAL + 1)) # Banner - Push pre-release tag (non-prod)
+          TOTAL=$((TOTAL + 1)) # Push pre-release tag (non-prod)
+        fi
 
         # Prod-only flow
         if [ "${{ inputs.mode }}" = "prod" ]; then
@@ -518,11 +530,38 @@ runs:
     - name: Health check slot
       shell: bash
       run: |
-        URL="${{ steps.resolve-slot-url.outputs.url }}"
-        echo "Running slot health check for $URL"
-        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 20 15 "slot (${{
-          inputs.slot_name
-        }})"
+        BASE_URL="${{ steps.resolve-slot-url.outputs.url }}"
+        VERSION_CHECK_PATH="${{ inputs.version_check_path }}"
+        if [ -n "$VERSION_CHECK_PATH" ]; then
+          # Ensure we don't end up with a double slash
+          if [[ "$VERSION_CHECK_PATH" == /* ]]; then
+            URL="$BASE_URL$VERSION_CHECK_PATH"
+          else
+            URL="$BASE_URL/$VERSION_CHECK_PATH"
+          fi
+        else
+          URL="$BASE_URL"
+        fi
+
+        echo "Running slot health check for $URL with APP_VERSION='${APP_VERSION}'"
+        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 20 15 "slot (${{ inputs.slot_name }})" "${APP_VERSION}"
+
+    # --- Non-prod: push pre-release tag only after successful deploy & health ---
+
+    - name: Banner - Push pre-release tag (non-prod)
+      if: ${{ inputs.mode == 'non-prod' }}
+      shell: bash
+      run: bash "${{ github.action_path }}/scripts/step_banner.sh" "Push pre-release tag (non-prod)"
+
+    - name: Push pre-release tag (non-prod)
+      id: tag_pre_release
+      if: ${{ inputs.mode == 'non-prod' }}
+      uses: mathieudutour/github-tag-action@v6.2
+      with:
+        github_token: ${{ inputs.github_token }}
+        default_bump: ${{ steps.version-params.outputs.default_bump }}
+        release_branches: ${{ inputs.release_branches }}
+        pre_release_branches: ${{ inputs.pre_release_branches }}
 
     # --- Slot swap & prod health (prod mode only) ---
 
@@ -587,9 +626,20 @@ runs:
       if: ${{ inputs.mode == 'prod' }}
       shell: bash
       run: |
-        URL="${{ steps.resolve-prod-url.outputs.url }}"
-        echo "Running production health check for $URL"
-        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 10 15 "production after swap"
+        BASE_URL="${{ steps.resolve-prod-url.outputs.url }}"
+        VERSION_CHECK_PATH="${{ inputs.version_check_path }}"
+        if [ -n "$VERSION_CHECK_PATH" ]; then
+          if [[ "$VERSION_CHECK_PATH" == /* ]]; then
+            URL="$BASE_URL$VERSION_CHECK_PATH"
+          else
+            URL="$BASE_URL/$VERSION_CHECK_PATH"
+          fi
+        else
+          URL="$BASE_URL"
+        fi
+
+        echo "Running production health check for $URL with APP_VERSION='${APP_VERSION}'"
+        bash "${{ github.action_path }}/scripts/health.sh" "$URL" 10 15 "production after swap" "${APP_VERSION}"
 
     # --- Optional release in prod mode ---
 
