@@ -1,0 +1,87 @@
+name: Build & Tag Action
+
+on:
+  push:
+    branches: ["master", "test", "v2/rewrite-with-typescript"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # --- 1. Calculate Next Version (Dry Run) ---
+      - name: Calculate Version
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          dry_run: true
+          default_bump: patch
+          default_prerelease_bump: false
+          release_branches: master
+          pre_release_branches: "test, v2/rewrite-with-typescript"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # --- 2. Build the Action ---
+      - name: Install & Build
+        run: |
+          npm ci
+          npm run build
+
+      # --- 3. Package & Tag the Build Artifact ---
+      - name: Deploy Build Tag
+        run: |
+          # Git Config
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Force add the compiled action
+          git add -f dist/index.js
+
+          # Check if build changed anything (optional safety)
+          if git diff --staged --quiet; then
+            echo "⚠️ No changes in dist/ detected."
+          fi
+
+          # Create the "Build Commit" (detached from history)
+          git commit -m "Build artifacts for ${{ steps.tag_version.outputs.new_tag }}"
+
+          # Use the CALCULATED tag from Step 1
+          TAG_NAME="${{ steps.tag_version.outputs.new_tag }}"
+
+          echo "🏷️ Tagging release: $TAG_NAME"
+
+          # Handle existing tags (if re-running/updating an RC)
+          git tag -d "$TAG_NAME" || true
+          git push origin ":refs/tags/$TAG_NAME" || true
+
+          # Push the new tag pointing to the built artifacts
+          git tag -a "$TAG_NAME" -m "Release $TAG_NAME"
+          git push origin "$TAG_NAME"
+
+          # Update the major version tag (v2) to point here too
+          if [[ "$TAG_NAME" != *"-"* ]]; then
+             MAJOR_TAG="v${TAG_NAME%%.*}" # Extract v2 from v2.1.0
+             echo "Updating major tag: $MAJOR_TAG"
+             git tag -f "$MAJOR_TAG"
+             git push origin "$MAJOR_TAG" -f
+          fi
+
+      - name: If branch is master, create a release with the tag
+        if: github.ref == 'refs/heads/master'
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ steps.tag_version.outputs.new_tag }}
+          name: ${{ steps.tag_version.outputs.new_tag }}
+          body: ${{ steps.tag_version.outputs.changelog }}
