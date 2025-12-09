@@ -397,7 +397,7 @@ var require_tunnel = __commonJS({
         connectOptions.headers = connectOptions.headers || {};
         connectOptions.headers["Proxy-Authorization"] = "Basic " + new Buffer(connectOptions.proxyAuth).toString("base64");
       }
-      debug2("making CONNECT request");
+      debug("making CONNECT request");
       var connectReq = self2.request(connectOptions);
       connectReq.useChunkedEncodingByDefault = false;
       connectReq.once("response", onResponse);
@@ -417,7 +417,7 @@ var require_tunnel = __commonJS({
         connectReq.removeAllListeners();
         socket.removeAllListeners();
         if (res.statusCode !== 200) {
-          debug2(
+          debug(
             "tunneling socket could not be established, statusCode=%d",
             res.statusCode
           );
@@ -429,7 +429,7 @@ var require_tunnel = __commonJS({
           return;
         }
         if (head.length > 0) {
-          debug2("got illegal response body from proxy");
+          debug("got illegal response body from proxy");
           socket.destroy();
           var error2 = new Error("got illegal response body from proxy");
           error2.code = "ECONNRESET";
@@ -437,13 +437,13 @@ var require_tunnel = __commonJS({
           self2.removeSocket(placeholder);
           return;
         }
-        debug2("tunneling connection has established");
+        debug("tunneling connection has established");
         self2.sockets[self2.sockets.indexOf(placeholder)] = socket;
         return cb(socket);
       }
       function onError(cause) {
         connectReq.removeAllListeners();
-        debug2(
+        debug(
           "tunneling socket could not be established, cause=%s\n",
           cause.message,
           cause.stack
@@ -505,9 +505,9 @@ var require_tunnel = __commonJS({
       }
       return target;
     }
-    var debug2;
+    var debug;
     if (process.env.NODE_DEBUG && /\btunnel\b/.test(process.env.NODE_DEBUG)) {
-      debug2 = function() {
+      debug = function() {
         var args = Array.prototype.slice.call(arguments);
         if (typeof args[0] === "string") {
           args[0] = "TUNNEL: " + args[0];
@@ -517,10 +517,10 @@ var require_tunnel = __commonJS({
         console.error.apply(console, args);
       };
     } else {
-      debug2 = function() {
+      debug = function() {
       };
     }
-    exports2.debug = debug2;
+    exports2.debug = debug;
   }
 });
 
@@ -19731,10 +19731,10 @@ Support boolean input list: \`true | True | TRUE | false | False | FALSE\``);
       return process.env["RUNNER_DEBUG"] === "1";
     }
     exports2.isDebug = isDebug;
-    function debug2(message) {
+    function debug(message) {
       (0, command_1.issueCommand)("debug", {}, message);
     }
-    exports2.debug = debug2;
+    exports2.debug = debug;
     function error2(message, properties = {}) {
       (0, command_1.issueCommand)("error", (0, utils_1.toCommandProperties)(properties), message instanceof Error ? message.toString() : message);
     }
@@ -30299,11 +30299,11 @@ var require_common = __commonJS({
         let enableOverride = null;
         let namespacesCache;
         let enabledCache;
-        function debug2(...args) {
-          if (!debug2.enabled) {
+        function debug(...args) {
+          if (!debug.enabled) {
             return;
           }
-          const self2 = debug2;
+          const self2 = debug;
           const curr = Number(/* @__PURE__ */ new Date());
           const ms = curr - (prevTime || curr);
           self2.diff = ms;
@@ -30333,12 +30333,12 @@ var require_common = __commonJS({
           const logFn = self2.log || createDebug.log;
           logFn.apply(self2, args);
         }
-        debug2.namespace = namespace;
-        debug2.useColors = createDebug.useColors();
-        debug2.color = createDebug.selectColor(namespace);
-        debug2.extend = extend2;
-        debug2.destroy = createDebug.destroy;
-        Object.defineProperty(debug2, "enabled", {
+        debug.namespace = namespace;
+        debug.useColors = createDebug.useColors();
+        debug.color = createDebug.selectColor(namespace);
+        debug.extend = extend2;
+        debug.destroy = createDebug.destroy;
+        Object.defineProperty(debug, "enabled", {
           enumerable: true,
           configurable: false,
           get: () => {
@@ -30356,9 +30356,9 @@ var require_common = __commonJS({
           }
         });
         if (typeof createDebug.init === "function") {
-          createDebug.init(debug2);
+          createDebug.init(debug);
         }
-        return debug2;
+        return debug;
       }
       function extend2(namespace, delimiter) {
         const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
@@ -30883,11 +30883,11 @@ var require_node = __commonJS({
     function load() {
       return process.env.DEBUG;
     }
-    function init(debug2) {
-      debug2.inspectOpts = {};
+    function init(debug) {
+      debug.inspectOpts = {};
       const keys = Object.keys(exports2.inspectOpts);
       for (let i = 0; i < keys.length; i++) {
-        debug2.inspectOpts[keys[i]] = exports2.inspectOpts[keys[i]];
+        debug.inspectOpts[keys[i]] = exports2.inspectOpts[keys[i]];
       }
     }
     module2.exports = require_common()(exports2);
@@ -30917,19 +30917,19 @@ var require_src = __commonJS({
 // node_modules/follow-redirects/debug.js
 var require_debug = __commonJS({
   "node_modules/follow-redirects/debug.js"(exports2, module2) {
-    var debug2;
+    var debug;
     module2.exports = function() {
-      if (!debug2) {
+      if (!debug) {
         try {
-          debug2 = require_src()("follow-redirects");
+          debug = require_src()("follow-redirects");
         } catch (error2) {
         }
-        if (typeof debug2 !== "function") {
-          debug2 = function() {
+        if (typeof debug !== "function") {
+          debug = function() {
           };
         }
       }
-      debug2.apply(null, arguments);
+      debug.apply(null, arguments);
     };
   }
 });
@@ -30943,7 +30943,7 @@ var require_follow_redirects = __commonJS({
     var https2 = require("https");
     var Writable = require("stream").Writable;
     var assert = require("assert");
-    var debug2 = require_debug();
+    var debug = require_debug();
     (function detectUnsupportedEnvironment() {
       var looksLikeNode = typeof process !== "undefined";
       var looksLikeBrowser = typeof window !== "undefined" && typeof document !== "undefined";
@@ -31260,7 +31260,7 @@ var require_follow_redirects = __commonJS({
       var currentHost = currentHostHeader || currentUrlParts.host;
       var currentUrl = /^\w+:/.test(location) ? this._currentUrl : url2.format(Object.assign(currentUrlParts, { host: currentHost }));
       var redirectUrl = resolveUrl(location, currentUrl);
-      debug2("redirecting to", redirectUrl.href);
+      debug("redirecting to", redirectUrl.href);
       this._isRedirect = true;
       spreadUrlObject(redirectUrl, this._options);
       if (redirectUrl.protocol !== currentUrlParts.protocol && redirectUrl.protocol !== "https:" || redirectUrl.host !== currentHost && !isSubdomain(redirectUrl.host, currentHost)) {
@@ -31314,7 +31314,7 @@ var require_follow_redirects = __commonJS({
             options.hostname = "::1";
           }
           assert.equal(options.protocol, protocol, "protocol mismatch");
-          debug2("options", options);
+          debug("options", options);
           return new RedirectableRequest(options, callback);
         }
         function get(input, options, callback) {
@@ -35179,12 +35179,22 @@ async function verifyHealth(rg, app, slot, path, expectedVersion) {
   const healthUrl = `${baseUrl}${path.startsWith("/") ? path : "/" + path}`;
   core2.info(`\u{1FA7A} Probing: ${healthUrl}`);
   const timeoutMs = 5 * 60 * 1e3;
+  const perAttemptTimeoutMs = 5e3;
+  const retryDelayMs = 1e4;
   const startTime = Date.now();
+  let attempt = 0;
   while (Date.now() - startTime < timeoutMs) {
+    attempt += 1;
+    const elapsedMs = Date.now() - startTime;
+    const remainingMs = Math.max(timeoutMs - elapsedMs, 0);
+    const requestTimeout = Math.min(perAttemptTimeoutMs, remainingMs || perAttemptTimeoutMs);
+    core2.info(`\u{1FA7A} Attempt ${attempt} (elapsed ${Math.round(elapsedMs / 1e3)}s)...`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeout);
     try {
       const response = await axios_default.get(healthUrl, {
-        timeout: 5e3,
-        validateStatus: () => true
+        timeout: requestTimeout,
+        signal: controller.signal
       });
       if (response.status >= 200 && response.status < 300) {
         if (!expectedVersion) {
@@ -35215,12 +35225,25 @@ async function verifyHealth(rg, app, slot, path, expectedVersion) {
           core2.info(`   Got body: "${preview}"`);
         }
       } else {
-        core2.info(`\u23F3 App returned HTTP ${response.status}. Waiting for 200 OK...`);
+        core2.info(`\u23F3 HTTP ${response.status}. Waiting for 2xx...`);
       }
     } catch (err) {
-      core2.debug(`\u26A0\uFE0F Network probe failed: ${err.message}`);
+      const message = err?.message || "Unknown error";
+      if (err?.code === "ERR_CANCELED") {
+        core2.info(`\u23F3 Attempt ${attempt} timed out after ${requestTimeout}ms; retrying...`);
+      } else if (err?.response?.status) {
+        const status = err.response.status;
+        const bodyPreview = typeof err.response.data === "string" ? err.response.data.substring(0, 80).replace(/\n/g, " ") + "..." : JSON.stringify(err.response.data);
+        core2.info(`\u23F3 Attempt ${attempt} received HTTP ${status}; body: ${bodyPreview}. Retrying...`);
+      } else if (message.includes("timeout")) {
+        core2.info(`\u23F3 Attempt ${attempt} hit request timeout (${requestTimeout}ms); retrying...`);
+      } else {
+        core2.info(`\u23F3 Attempt ${attempt} failed: ${message}. Retrying...`);
+      }
+    } finally {
+      clearTimeout(timer);
     }
-    await new Promise((r) => setTimeout(r, 1e4));
+    await new Promise((r) => setTimeout(r, retryDelayMs));
   }
   throw new Error(`\u274C Health Check Timed Out! Endpoint ${healthUrl} did not become healthy or match version '${expectedVersion}' within 5 minutes.`);
 }

@@ -16,13 +16,27 @@ export async function verifyHealth(
     core.info(`🩺 Probing: ${healthUrl}`);
 
     const timeoutMs = 5 * 60 * 1000; // 5 minutes max
+    const perAttemptTimeoutMs = 5000;
+    const retryDelayMs = 10000;
+
     const startTime = Date.now();
+    let attempt = 0;
 
     while (Date.now() - startTime < timeoutMs) {
+        attempt += 1;
+        const elapsedMs = Date.now() - startTime;
+        const remainingMs = Math.max(timeoutMs - elapsedMs, 0);
+        const requestTimeout = Math.min(perAttemptTimeoutMs, remainingMs || perAttemptTimeoutMs);
+
+        core.info(`🩺 Attempt ${attempt} (elapsed ${Math.round(elapsedMs / 1000)}s)...`);
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), requestTimeout);
+
         try {
             const response = await axios.get(healthUrl, {
-                timeout: 5000,
-                validateStatus: () => true
+                timeout: requestTimeout,
+                signal: controller.signal
             });
 
             // Only proceed if the app is actually UP
@@ -40,7 +54,7 @@ export async function verifyHealth(
 
                 // Strategy 1: Exact Match in JSON (if applicable)
                 if (typeof data === 'object' && data !== null) {
-                    const jsonVersion = data.version || data.app_version;
+                    const jsonVersion = (data as any).version || (data as any).app_version;
                     if (jsonVersion === expectedVersion) {
                         versionFound = true;
                     }
@@ -70,15 +84,28 @@ export async function verifyHealth(
                     core.info(`   Got body: "${preview}"`);
                 }
             } else {
-                core.info(`⏳ App returned HTTP ${response.status}. Waiting for 200 OK...`);
+                core.info(`⏳ HTTP ${response.status}. Waiting for 2xx...`);
             }
         } catch (err: any) {
-            // Network errors (DNS, Connection Refused) usually mean app is restarting
-            core.debug(`⚠️ Network probe failed: ${err.message}`);
+            const message = err?.message || 'Unknown error';
+            if (err?.code === 'ERR_CANCELED') {
+                core.info(`⏳ Attempt ${attempt} timed out after ${requestTimeout}ms; retrying...`);
+            } else if (err?.response?.status) {
+                const status = err.response.status;
+                const bodyPreview = typeof err.response.data === 'string'
+                    ? err.response.data.substring(0, 80).replace(/\n/g, ' ') + '...'
+                    : JSON.stringify(err.response.data);
+                core.info(`⏳ Attempt ${attempt} received HTTP ${status}; body: ${bodyPreview}. Retrying...`);
+            } else if (message.includes('timeout')) {
+                core.info(`⏳ Attempt ${attempt} hit request timeout (${requestTimeout}ms); retrying...`);
+            } else {
+                core.info(`⏳ Attempt ${attempt} failed: ${message}. Retrying...`);
+            }
+        } finally {
+            clearTimeout(timer);
         }
 
-        // Wait 10s before retry
-        await new Promise(r => setTimeout(r, 10000));
+        await new Promise(r => setTimeout(r, retryDelayMs));
     }
 
     throw new Error(`❌ Health Check Timed Out! Endpoint ${healthUrl} did not become healthy or match version '${expectedVersion}' within 5 minutes.`);
