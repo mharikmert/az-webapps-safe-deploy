@@ -24,17 +24,16 @@ async function run(): Promise<void> {
         }
 
         // --- Step 1: Deploy to the Initial Slot ---
-        if (expectedVersion) {
-            core.info(`⚙️  Setting APP_VERSION=${expectedVersion} on slot '${slotName}'...`);
-            await setAppSetting(resourceGroup, appName, slotName, 'APP_VERSION', expectedVersion);
-        }
-
         if (images) {
             core.info(`🐳 Deploying Container to slot '${slotName}'...`);
             await updateContainer(resourceGroup, appName, slotName, images);
         } else if (packagePath) {
             core.info(`📦 Deploying Code to slot '${slotName}'...`);
             await deployZip(resourceGroup, appName, slotName, packagePath);
+        }
+        if (expectedVersion) {
+            core.info(`⚙️  Setting APP_VERSION=${expectedVersion} on slot '${slotName}'...`);
+            await setAppSetting(resourceGroup, appName, slotName, 'APP_VERSION', expectedVersion);
         }
 
         // --- Step 2: Verify Initial Slot (Always runs) ---
