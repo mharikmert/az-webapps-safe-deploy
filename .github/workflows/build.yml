@@ -28,9 +28,9 @@ jobs:
           default_prerelease_bump: false
           dry_run: true
 
-      - name: Set Version
+      - name: Set New Tag
         run: |
-          echo "VERSION=${{ steps.tag_version.outputs.new_version }}" >> $GITHUB_ENV
+          echo "NEW_TAG=${{ steps.tag_version.outputs.new_tag }}" >> $GITHUB_ENV
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -59,33 +59,30 @@ jobs:
           fi
 
           # Create the "Build Commit" (detached from history)
-          git commit -m "Build artifacts for $VERSION"
+          git commit -m "Build artifacts for $NEW_TAG"
 
-          # Use the CALCULATED tag from Step 1
-          TAG_NAME="$VERSION"
-
-          echo "🏷️ Tagging build: $TAG_NAME"
+          echo "🏷️ Tagging build: $NEW_TAG"
 
           # Handle existing tags (if re-running/updating an RC)
-          git tag -d "$TAG_NAME" || true
-          git push origin ":refs/tags/$TAG_NAME" || true
+          git tag -d "$NEW_TAG" || true
+          git push origin ":refs/tags/$NEW_TAG" || true
 
           # Push the new tag pointing to the built artifacts
-          git tag -a "$TAG_NAME" -m "Build artifacts for $VERSION"
-          git push origin "$TAG_NAME"
+          git tag -a "$NEW_TAG" -m "Build artifacts for $NEW_TAG"
+          git push origin "$NEW_TAG"
 
           # Update the major version tag (v2) to point here too
-          if [[ "$TAG_NAME" != *"-"* ]]; then
-             MAJOR_TAG="${TAG_NAME%%.*}" # Extract v2 from v2.1.0
-             echo "Updating major tag: $MAJOR_TAG"
-             git tag -f "$MAJOR_TAG"
-             git push origin "$MAJOR_TAG" -f
+          if [[ "$NEW_TAG" != *"-"* ]]; then
+             NEW_MAJOR_TAG="${NEW_TAG%%.*}" # Extract v2 from v2.1.0
+             echo "Updating major tag: $NEW_MAJOR_TAG"
+             git tag -f "$NEW_MAJOR_TAG"
+             git push origin "$NEW_MAJOR_TAG" -f
           fi
 
       - name: If branch is master, create a release with the tag
         if: github.ref == 'refs/heads/master'
         uses: ncipollo/release-action@v1
         with:
-          tag: $VERSION
-          name: $VERSION
+          tag: ${{ env.NEW_TAG }}
+          name: ${{ env.NEW_TAG }}
           body: ${{ steps.tag_version.outputs.changelog }}
