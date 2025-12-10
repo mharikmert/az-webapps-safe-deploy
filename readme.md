@@ -1,202 +1,209 @@
-# Azure App Service CI/CD Action
+# 🛡️ Azure Web Apps Safe Deploy
 
-An opinionated, dual-mode GitHub Action for deploying  applications to Azure App Service. It supports both **Code**  and **Container** publishing models, handling semantic versioning, slot deployments, health checks, and production swaps automatically.
+A GitHub Action for Azure Web Apps that ensures deployment safety through health verification and zero-downtime slot swaps.
 
-## 🚀 Features
+This action goes beyond standard deployments by implementing comprehensive health checks—handling cold starts, transient errors, and version verification—before releasing traffic to new deployments.
 
-  * **Dual Modes:** `non-prod` for RC testing and `prod` for full release with slot swaps.
-  * **Dual Models:** Deploy raw code (`npm install` + zip) or Docker containers.
-  * **Automated Versioning:** Calculates semantic versions (SemVer) and manages GitHub Tags/Releases.
-  * **Zero-Downtime:** Deploys to a staging slot, verifies health, and then swaps to production.
-  * **Health Checks:** built-in verification of the deployed endpoint before swapping.
+---
 
-## workflow logic
+## 🚀 Why use this action over `azure/webapps-deploy`?
+
+`azure/webapps-deploy` completes successfully once the package is published or the container is updated regardless of whether the application starts correctly. This action ensures the deployment is fully operational before marking the workflow as successful.
+
+| Feature           | azure/webapps-deploy                                  | This Action                                                     |
+| :---------------- | :---------------------------------------------------- | :-------------------------------------------------------------- |
+| **Deployment**    | ✅ Publishes package / updates container configuration | ✅ Publishes package / updates container configuration           |
+| **Verification**  | ❌ None or basic HTTP check                            | ✅ Polling with retry logic for cold starts and transient errors |
+| **Version Check** | ❌ May serve cached content                            | ✅ Confirms the expected version is actively serving traffic     |
+| **Swap Safety**   | ⚠️ Swaps without verification                          | ✅ Validates both staging and production endpoints after swap    |
+
+---
+
+## 🧠 Workflow Logic
 
 ```mermaid
 graph TD
-    Start(Start) --> Init{publishing model}
+    Start(Start) --> Deploy[Deploy Artifact<br/>Package or Container]
+    Deploy --> Verify1{Verify Slot Health}
     
-    %% Code Path
-    Init -- "code" --> Setup[Setup Node & Build]
-    Setup --> DeploySlot[Deploy Code to Slot]
-
-    %% Container Path
-    Init -- "container" --> Docker[Build & Push Image]
-    Docker --> DeployContainer[Update Slot w/ Image]
-
-    %% Merge
-    DeploySlot --> Health[Health Check Slot]
-    DeployContainer --> Health
-    
-    Health --> ModeCheck{Mode?}
+    Verify1 -- "Timeout / Error" --> Fail(❌ Fail Deployment)
+    Verify1 -- "Healthy & Version Match" --> Mode{Mode?}
     
     %% Non-Prod Path
-    ModeCheck -- "non-prod" --> PreTag[Tag: v1.0.0-rc]
-    PreTag --> End((End))
+    Mode -- "non-prod" --> Success((✅ Done))
 
     %% Prod Path
-    ModeCheck -- "prod" --> Swap[Swap to Production]
-    Swap --> HealthProd[Health Check Prod]
-    HealthProd --> Release[Create Release v1.0.0]
-    Release --> End
+    Mode -- "prod" --> Swap[Swap Slot -> Production]
+    Swap --> Verify2{Verify Production}
+    
+    Verify2 -- "Critical Failure" --> Alert(❌ Fail & Alert)
+    Verify2 -- "Healthy" --> Success
 ```
 
-## 📋 Usage
+---
 
-### Prerequisites
+## 📋 Prerequisites
 
-- You must have an Azure Service Principal JSON stored in your repository secrets (e.g., `AZURE_CREDENTIALS`).
-- Service Principal should have the permission to deploy to the Azure App Service. See [Azure App Service Deployment Permissions](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions?tabs=userlevel#permissions).
-    ```json
-    {
-        "clientId": "your-client-id",
-        "clientSecret": "your-client-secret",
-        "subscriptionId": "your-subscription-id",
-        "tenantId": "your-tenant-id"
-    }
-    ```
+- **Azure CLI Authentication**: Use `azure/login` before this action
+- **Service Principal**: Must have required permissions to the target App Service. See [Azure App Service Deployment Permissions](https://learn.microsoft.com/en-us/azure/app-service/deploy-github-actions?tabs=userlevel#permissions).
+- **Deployment Slot**: A configured slot on the target Web App (e.g., `staging`, `test`)
 
-### 1\. Publishing Model: Code (Zip Deploy)
+---
 
-Best for standard Node.js apps. Builds, tests, and deploys the artifact.
+## ⚡ Usage Examples
+
+### Package (Code) Deployment
 
 ```yaml
-name: Deploy Node App
-on: [push]
-
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Build & Deploy
-        uses: mharikmert/az-app-service-build-and-deploy@v1
+      - uses: actions/checkout@v4
+      - name: Build Application
+        run: |
+          npm ci && npm run build
+          zip -q -r package.zip . -x "*.git*" "node_modules/*"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          mode: "prod"
-          publishing_model: "code"
-          
-          # Azure Config
-          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          resource_group: "my-resource-group"
-          webapp_name: "my-node-app"
-          slot_name: "staging"
-          
-          # Node Build Config
-          node_version: "20.x"
-          install_command: "npm ci"
-          run_tests: "true"
-          build_command: "npm run build"
-          
-          # Versioning
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          release: "true"
-```
+          name: package
+          path: package.zip
+          retention-days: 1
 
-### 2\. Container Model (Docker)
-
-Builds a Docker image, pushes to ACR, and updates the App Service.
-
-```yaml
-name: Deploy Container App
-on: [push]
-
-jobs:
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      - name: Build & Deploy
-        uses: mharikmert/action-azure-node-deploy@v1
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
         with:
-          mode: "prod"
-          publishing_model: "container"
-          
-          # Container Registry Config
-          container_registry: "myregistry.azurecr.io"
-          container_repository: "my-api-service"
-          container_registry_username: ${{ secrets.ACR_USERNAME }}
-          container_registry_password: ${{ secrets.ACR_PASSWORD }}
-          
-          # Azure Config
-          azure_credentials: ${{ secrets.AZURE_CREDENTIALS }}
-          resource_group: "my-resource-group"
-          webapp_name: "my-container-app"
+          name: package
+          path: package.zip
+
+      - uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Staging
+        uses: mharikmert/az-webapp-safe-deploy@v2
+        with:
+          mode: "non-prod"
+          # Identity
+          app_name: "my-backend-api"
+          resource_group: "my-rg"
           slot_name: "staging"
-          
-          # Versioning
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Artifact
+          package_path: "package.zip"
+          # Verification
+          health_check_path: "/health"
+          expected_version: ${{ github.sha }}
 ```
 
-## ⚙️ Configuration
+### Container Deployment
 
-### Core Inputs
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: myregistry.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+      
+      - uses: docker/build-push-action@v5
+        with:
+          push: true
+          tags: myregistry.azurecr.io/myapp:${{ github.sha }}
 
-| Input               | Required | Default | Description                                                             |
-| :------------------ | :------: | :------ | :---------------------------------------------------------------------- |
-| `mode`              | **Yes**  | -       | `non-prod` (deploy to slot, no swap) or `prod` (deploy, swap, release). |
-| `publishing_model`  |    No    | `code`  | `code` for zip deploy, `container` for Docker.                          |
-| `github_token`      | **Yes**  | -       | Used for version calculation and creating releases.                     |
-| `azure_credentials` | **Yes**  | -       | JSON credentials for `azure/login`.                                     |
-| `resource_group`    | **Yes**  | -       | Azure Resource Group name.                                              |
-| `webapp_name`       | **Yes**  | -       | Azure App Service name.                                                 |
-| `slot_name`         | **Yes**  | -       | The slot to deploy to initially (e.g., `staging`, `dev`).               |
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-### Code Model Inputs
+      - name: Deploy to Staging & Swap to Production
+        uses: mharikmert/az-webapp-safe-deploy@v2
+        with:
+          mode: "prod"
+          # Identity
+          app_name: "my-container-app"
+          resource_group: "my-rg"
+          slot_name: "staging" # Target slot
+          swap_target: "production" # Production slot
+          # Artifact
+          images: "myregistry.azurecr.io/myapp:${{ github.sha }}"
+          # Verification
+          health_check_path: "/health"
+          expected_version: ${{ github.sha }} # Expected version
+```
 
-*Only used when `publishing_model` is `code`.*
+---
 
-| Input             | Default    | Description                                           |
-| :---------------- | :--------- | :---------------------------------------------------- |
-| `node_version`    | `22.x`     | Node.js version to setup.                             |
-| `install_command` | `npm ci`   | Command to install dependencies.                      |
-| `build_command`   | `""`       | Command to build the project (e.g., `npm run build`). |
-| `run_tests`       | `false`    | If `true`, runs `test_command` before deployment.     |
-| `test_command`    | `npm test` | Command to run tests.                                 |
-| `package_path`    | `.`        | Path to the folder or zip to deploy.                  |
+## ⚙️ Inputs
 
-### Container Model Inputs
+### Core Configuration
 
-*Only used when `publishing_model` is `container`.*
+| Input            | Required | Description                                                                                   |
+| :--------------- | :------- | :-------------------------------------------------------------------------------------------- |
+| `app_name`       | Yes      | Name of the Azure Web App                                                                     |
+| `resource_group` | Yes      | Azure Resource Group name                                                                     |
+| `slot_name`      | Yes      | Target deployment slot (e.g., `staging`, `test`)                                              |
+| `mode`           | No       | `non-prod` (deploy + verify) or `prod` (deploy + verify + swap + verify). Default: `non-prod` |
 
-| Input                         | Default        | Description                              |
-| :---------------------------- | :------------- | :--------------------------------------- |
-| `container_registry`          | `""`           | Registry URL (e.g., `myreg.azurecr.io`). |
-| `container_repository`        | `""`           | Repository name (e.g., `my-app`).        |
-| `container_registry_username` | `""`           | Username for registry login.             |
-| `container_registry_password` | `""`           | Password/Token for registry login.       |
-| `dockerfile`                  | `./Dockerfile` | Path to Dockerfile relative to root.     |
+### Artifact Configuration
 
-### Versioning & Strategy
+Provide one of the following:
 
-| Input                | Default      | Description                                               |
-| :------------------- | :----------- | :-------------------------------------------------------- |
-| `swap_target_slot`   | `production` | The slot to swap into during `prod` mode.                 |
-| `version_check_path` | `/`          | HTTP path to verify health (e.g. `/api/health`).          |
-| `release`            | `false`      | If `true` (and mode is `prod`), creates a GitHub Release. |
-| `prod_default_bump`  | `patch`      | SemVer bump type for production releases.                 |
-| `non_prod_suffix`    | `-rc`        | Suffix appended to versions in `non-prod` mode.           |
+| Input          | Description                                                    |
+| :------------- | :------------------------------------------------------------- |
+| `package_path` | Path to deployment package (`.zip`) for code deployments       |
+| `images`       | Container image tag (e.g., `myregistry.azurecr.io/app:v1.0.0`) |
 
-## 📤 Outputs
+### Health Verification
 
-| Output         | Description                                                                               |
-| :------------- | :---------------------------------------------------------------------------------------- |
-| `next_version` | The calculated semantic version (dry-run, e.g., `1.2.0`).                                 |
-| `app_version`  | The actual version used for deployment (includes suffix in non-prod, e.g., `1.2.0-rc.1`). |
-| `release_tag`  | The tag name created if a release occurred.                                               |
+| Input               | Default      | Description                                                               |
+| :------------------ | :----------- | :------------------------------------------------------------------------ |
+| `health_check_path` | `/`          | HTTP endpoint for health verification                                     |
+| `expected_version`  | -            | Version string to match in response body (ensures new deployment is live) |
+| `swap_target`       | `production` | Target slot for swap operation (prod mode only)                           |
 
-## 🏷️ Versioning Logic
+---
 
-1.  **Non-Prod Mode:**
+## 🔍 Health Verification Details
 
-      * Calculates next version based on commits.
-      * Appends suffix (default `-rc`).
-      * Deploys to `slot_name`.
-      * **Result:** App is live on Staging slot with version `1.0.1-rc.1`. No Swap.
+The action implements a polling mechanism with a 5-minute timeout:
 
-2.  **Prod Mode:**
+**Request Handling**
+- 20-second timeout per request to accommodate cold starts
+- 5-second interval between retry attempts
+- Automatic retry on connection refused, timeouts, and 502/503 responses
 
-      * Calculates next version.
-      * Deploys to `slot_name`.
-      * Performs Health Check.
-      * Swaps `slot_name` with `swap_target_slot` (Production).
-      * **Result:** App is live on Production with version `1.0.1`. GitHub Release created (optional).
+**Version Matching**
+- Checks JSON response fields: `version`, `app_version`
+- Falls back to substring search in response body
+- Blocks slot swap until the expected version is confirmed
+
+---
+
+## ⚠️ Troubleshooting
+
+**Health Check Timed Out**
+- Verify the health endpoint returns HTTP 200
+- Ensure application startup completes within 5 minutes
+- Confirm the correct slot name is specified
+
+**Operation Canceled**
+- Check if the GitHub workflow timeout was exceeded
+- Review Azure Activity Log for slot restart issues
+
+**Azure CLI Failed**
+- Verify the service principal has Contributor role on the resource group
+- Ensure `azure/login` completed successfully before this action
