@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import axios from 'axios';
 import { getSlotUrl } from './azure';
+import { setTimeout as sleep } from 'timers/promises';
 
 export async function verifyHealth(
     rg: string,
@@ -15,9 +16,9 @@ export async function verifyHealth(
 
     core.info(`🩺 Probing: ${healthUrl}`);
 
-    const timeoutMs = 5 * 60 * 1000; // 5 minutes max
-    const perAttemptTimeoutMs = 5000;
-    const retryDelayMs = 10000;
+    const timeoutMs = 5 * 60 * 1000; // 5 minutes max global wait
+    const perAttemptTimeoutMs = 20000; // 20s for Cold Starts
+    const retryDelayMs = 5000; // Reduced wait between retries to 5s
 
     const startTime = Date.now();
     let attempt = 0;
@@ -26,7 +27,11 @@ export async function verifyHealth(
         attempt += 1;
         const elapsedMs = Date.now() - startTime;
         const remainingMs = Math.max(timeoutMs - elapsedMs, 0);
-        const requestTimeout = Math.min(perAttemptTimeoutMs, remainingMs || perAttemptTimeoutMs);
+
+        // Don't start a request if we have practically no time left
+        if (remainingMs < 1000) break;
+
+        const requestTimeout = Math.min(perAttemptTimeoutMs, remainingMs);
 
         core.info(`🩺 Attempt ${attempt} (elapsed ${Math.round(elapsedMs / 1000)}s)...`);
 
@@ -36,7 +41,8 @@ export async function verifyHealth(
         try {
             const response = await axios.get(healthUrl, {
                 timeout: requestTimeout,
-                signal: controller.signal
+                signal: controller.signal,
+                validateStatus: () => true // Prevent throwing on 4xx/5xx
             });
 
             // Only proceed if the app is actually UP
@@ -52,7 +58,7 @@ export async function verifyHealth(
                 const data = response.data;
                 let versionFound = false;
 
-                // Strategy 1: Exact Match in JSON (if applicable)
+                // Strategy 1: Exact Match in JSON
                 if (typeof data === 'object' && data !== null) {
                     const jsonVersion = (data as any).version || (data as any).app_version;
                     if (jsonVersion === expectedVersion) {
@@ -60,11 +66,9 @@ export async function verifyHealth(
                     }
                 }
 
-                // Strategy 2: Substring Match (Text/HTML/JSON-String)
-                // This handles: "app is up (v1.2.3)" or "Current Version: 1.2.3"
+                // Strategy 2: Substring Match
                 if (!versionFound) {
                     const bodyString = typeof data === 'string' ? data : JSON.stringify(data);
-
                     if (bodyString.includes(expectedVersion)) {
                         versionFound = true;
                     }
@@ -74,7 +78,6 @@ export async function verifyHealth(
                     core.info(`✅ Verified! Found version identifier '${expectedVersion}' in response.`);
                     return;
                 } else {
-                    // Truncate long HTML responses for cleaner logs
                     const preview = typeof data === 'string'
                         ? data.substring(0, 50).replace(/\n/g, ' ') + '...'
                         : JSON.stringify(data);
@@ -84,28 +87,28 @@ export async function verifyHealth(
                     core.info(`   Got body: "${preview}"`);
                 }
             } else {
+                // Handle 503s (common during startup) gracefully here
                 core.info(`⏳ HTTP ${response.status}. Waiting for 2xx...`);
             }
         } catch (err: any) {
             const message = err?.message || 'Unknown error';
-            if (err?.code === 'ERR_CANCELED') {
-                core.info(`⏳ Attempt ${attempt} timed out after ${requestTimeout}ms; retrying...`);
-            } else if (err?.response?.status) {
-                const status = err.response.status;
-                const bodyPreview = typeof err.response.data === 'string'
-                    ? err.response.data.substring(0, 80).replace(/\n/g, ' ') + '...'
-                    : JSON.stringify(err.response.data);
-                core.info(`⏳ Attempt ${attempt} received HTTP ${status}; body: ${bodyPreview}. Retrying...`);
-            } else if (message.includes('timeout')) {
-                core.info(`⏳ Attempt ${attempt} hit request timeout (${requestTimeout}ms); retrying...`);
-            } else {
-                core.info(`⏳ Attempt ${attempt} failed: ${message}. Retrying...`);
+
+            // Differentiate "Fast Fail" (Refused) vs "Slow Fail" (Timeout)
+            if (err.code === 'ECONNREFUSED') {
+                core.info(`🔌 Connection Refused. App process is starting...`);
+            }
+            else if (err.code === 'ECONNABORTED' || err.code === 'ERR_CANCELED' || message.includes('timeout')) {
+                core.info(`🐢 Request Timed Out after ${requestTimeout}ms. App is likely cold-starting.`);
+            }
+            else {
+                core.info(`⚠️ Attempt ${attempt} failed: ${message}. Retrying...`);
             }
         } finally {
-            clearTimeout(timer);
+            clearTimeout(timer as any);
         }
 
-        await new Promise(r => setTimeout(r, retryDelayMs));
+        // Wait before next attempt
+        await sleep(retryDelayMs);
     }
 
     throw new Error(`❌ Health Check Timed Out! Endpoint ${healthUrl} did not become healthy or match version '${expectedVersion}' within 5 minutes.`);
