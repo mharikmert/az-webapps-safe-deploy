@@ -209,6 +209,29 @@ describe('health.ts', () => {
 
             mockNow.mockRestore();
         });
+
+        it('should handle generic errors gracefully', async () => {
+            const mockNow = jest.spyOn(Date, 'now');
+            let callCount = 0;
+            mockNow.mockImplementation(() => {
+                callCount++;
+                if (callCount > 3) return 6 * 60 * 1000;
+                return callCount * 1000;
+            });
+
+            const genericError = new Error('Some unexpected network error');
+            mockAxios.get.mockRejectedValue(genericError);
+
+            await expect(verifyHealth('rg', 'app', 'staging', '/health'))
+                .rejects
+                .toThrow('Health Check Timed Out');
+
+            expect(core.info).toHaveBeenCalledWith(
+                expect.stringContaining('failed')
+            );
+
+            mockNow.mockRestore();
+        });
     });
 
     describe('retry behavior', () => {

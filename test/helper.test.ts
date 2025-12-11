@@ -5,7 +5,7 @@ import * as core from '@actions/core';
 jest.mock('@actions/exec');
 jest.mock('@actions/core');
 
-import { inferDeployType, zipFolder } from '../src/helper';
+import { inferDeployType, zipFolder, preparePackage, fsUtils } from '../src/helper';
 
 const mockExec = exec.exec as jest.MockedFunction<typeof exec.exec>;
 
@@ -82,6 +82,83 @@ describe('helper.ts', () => {
             const result2 = await zipFolder('/path/to/folder2');
 
             expect(result1).not.toBe(result2);
+        });
+    });
+
+    describe('preparePackage', () => {
+        let originalExistsSync: typeof fsUtils.existsSync;
+        let originalIsDirectory: typeof fsUtils.isDirectory;
+
+        beforeEach(() => {
+            // Save originals
+            originalExistsSync = fsUtils.existsSync;
+            originalIsDirectory = fsUtils.isDirectory;
+        });
+
+        afterEach(() => {
+            // Restore originals
+            fsUtils.existsSync = originalExistsSync;
+            fsUtils.isDirectory = originalIsDirectory;
+        });
+
+        it('should throw if path does not exist', async () => {
+            fsUtils.existsSync = jest.fn().mockReturnValue(false);
+
+            await expect(preparePackage('/nonexistent/path'))
+                .rejects
+                .toThrow('Package path does not exist: /nonexistent/path');
+        });
+
+        it('should zip folder and return type "zip"', async () => {
+            fsUtils.existsSync = jest.fn().mockReturnValue(true);
+            fsUtils.isDirectory = jest.fn().mockReturnValue(true);
+
+            const result = await preparePackage('/path/to/folder');
+
+            expect(result.type).toBe('zip');
+            expect(result.path).toMatch(/deploy-\d+\.zip$/);
+            expect(mockExec).toHaveBeenCalledWith(
+                'zip',
+                expect.any(Array),
+                expect.any(Object)
+            );
+        });
+
+        it('should return file path and inferred type for zip file', async () => {
+            fsUtils.existsSync = jest.fn().mockReturnValue(true);
+            fsUtils.isDirectory = jest.fn().mockReturnValue(false);
+
+            const result = await preparePackage('/path/to/app.zip');
+
+            expect(result).toEqual({
+                path: '/path/to/app.zip',
+                type: 'zip'
+            });
+            expect(mockExec).not.toHaveBeenCalled();
+        });
+
+        it('should return file path and inferred type for war file', async () => {
+            fsUtils.existsSync = jest.fn().mockReturnValue(true);
+            fsUtils.isDirectory = jest.fn().mockReturnValue(false);
+
+            const result = await preparePackage('/path/to/app.war');
+
+            expect(result).toEqual({
+                path: '/path/to/app.war',
+                type: 'war'
+            });
+        });
+
+        it('should return file path and inferred type for jar file', async () => {
+            fsUtils.existsSync = jest.fn().mockReturnValue(true);
+            fsUtils.isDirectory = jest.fn().mockReturnValue(false);
+
+            const result = await preparePackage('/path/to/app.jar');
+
+            expect(result).toEqual({
+                path: '/path/to/app.jar',
+                type: 'jar'
+            });
         });
     });
 });

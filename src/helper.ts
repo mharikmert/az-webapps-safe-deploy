@@ -7,6 +7,12 @@ import * as os from 'os';
 export type DeployType = 'zip' | 'war' | 'jar' | 'ear' | 'static' | 'startup';
 const VALID_TYPES: DeployType[] = ['zip', 'war', 'jar', 'ear', 'static', 'startup'];
 
+// Exported for testing - allows mocking fs operations
+export const fsUtils = {
+    existsSync: (p: string) => fs.existsSync(p),
+    isDirectory: (p: string) => fs.statSync(p).isDirectory()
+};
+
 /**
  * Infer deploy type from file extension.
  */
@@ -37,11 +43,11 @@ export async function zipFolder(folderPath: string): Promise<string> {
  * - File: returns path as-is + inferred type from extension
  */
 export async function preparePackage(srcPath: string): Promise<{ path: string; type: DeployType }> {
-    if (!fs.existsSync(srcPath)) {
+    if (!fsUtils.existsSync(srcPath)) {
         throw new Error(`Package path does not exist: ${srcPath}`);
     }
 
-    if (fs.statSync(srcPath).isDirectory()) {
+    if (fsUtils.isDirectory(srcPath)) {
         const zipPath = await zipFolder(srcPath);
         return { path: zipPath, type: 'zip' };
     }
