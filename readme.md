@@ -61,15 +61,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Application
-        run: |
-          npm ci && npm run build
-          zip -q -r package.zip . -x "*.git*" "node_modules/*"
-
+        run: | # Assume your configuration creates a 'dist' folder for the production build
+          npm ci --include=dev
+          npm run build 
+          npm prune --production
+          
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: package
-          path: package.zip
+          path: dist  
           retention-days: 1
 
   deploy:
@@ -82,7 +83,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: package
-          path: package.zip
+          path: dist 
 
       - uses: azure/login@v1
         with:
@@ -92,15 +93,13 @@ jobs:
         uses: mharikmert/az-webapp-safe-deploy@v2
         with:
           mode: "non-prod"
-          # Identity
           app_name: "my-backend-api"
           resource_group: "my-rg"
           slot_name: "staging"
-          # Artifact
-          package_path: "package.zip"
-          # Verification
+          package_path: "dist" 
           health_check_path: "/health"
           expected_version: ${{ github.sha }}
+
 ```
 
 ### Container Deployment
@@ -136,8 +135,8 @@ jobs:
           # Identity
           app_name: "my-container-app"
           resource_group: "my-rg"
-          slot_name: "staging" # Target slot
-          swap_target: "production" # Production slot
+          slot_name: "staging" # Initial deployment slot
+          swap_target: "production" # Target slot for swap operation
           # Artifact
           images: "myregistry.azurecr.io/myapp:${{ github.sha }}"
           # Verification
@@ -207,3 +206,14 @@ The action implements a polling mechanism with a 5-minute timeout:
 **Azure CLI Failed**
 - Verify the service principal has Contributor role on the resource group
 - Ensure `azure/login` completed successfully before this action
+
+---
+
+## 🧪 Tests [![Coverage Status](https://coveralls.io/repos/github/mharikmert/az-webapp-safe-deploy/badge.svg?branch=master)](https://coveralls.io/github/mharikmert/az-webapp-safe-deploy?branch=master)
+
+
+```bash
+npm install
+npm test                 # Run all tests
+npm test -- --coverage   # With coverage report
+```

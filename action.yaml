@@ -19,7 +19,7 @@ inputs:
 
   # --- Artifacts (One is required) ---
   package_path:
-    description: "Path to zip file or folder (for Code mode)."
+    description: "Path to folder or file (zip/war/jar/ear). Folders are auto-zipped."
     required: false
   images:
     description: "Docker image tag(s) (for Container mode)."

@@ -37,13 +37,23 @@ jobs:
         with:
           node-version: "20"
 
-      # --- 2. Build the Action ---
-      - name: Install & Build
-        run: |
-          npm ci
-          npm run build
+      - name: Install Dependencies
+        run: npm ci
 
-      # --- 3. Package & Tag the Build Artifact ---
+      # --- 2. Run Tests ---
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage --coverageReporters=lcov --coverageReporters=text
+
+      - name: Upload Coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # --- 3. Build the Action ---
+      - name: Build
+        run: npm run build
+
+      # --- 4. Package & Tag the Build Artifact ---
       - name: Deploy Build Tag
         run: |
           # Git Config

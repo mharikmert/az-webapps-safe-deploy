@@ -1,5 +1,6 @@
 import * as exec from '@actions/exec';
 import * as core from '@actions/core';
+import { preparePackage } from './helper';
 
 /**
  * Helper to run az commands cleanly and capture output/errors.
@@ -35,24 +36,31 @@ function addSlotArg(args: string[], slot: string) {
     }
 }
 
-export async function deployZip(rg: string, app: string, slot: string, srcPath: string) {
-    core.info(`📦 Deploying zip from ${srcPath} to ${app} (${slot})...`);
+/**
+ * Deploy a package to Azure App Service.
+ * - Folder: auto-zips via helper
+ * - File: infers type from extension (zip, war, jar, ear)
+ */
+export async function deployPackage(rg: string, app: string, slot: string, srcPath: string) {
+    const pkg = await preparePackage(srcPath);
+
+    core.info(`📦 Deploying ${pkg.type} from ${pkg.path} to ${app} (${slot})...`);
 
     const args = [
         'webapp', 'deploy',
         '--resource-group', rg,
         '--name', app,
-        '--src-path', srcPath,
-        '--type', 'zip',
-        '--async', 'false' // Wait for completion
+        '--src-path', pkg.path,
+        '--type', pkg.type,
+        '--async', 'false'
     ];
 
     addSlotArg(args, slot);
     await az(args);
 }
 
-export async function updateContainer(rg: string, app: string, slot: string, image: string) {
-    core.info(`🐳 Updating container to ${image} on ${app} (${slot})...`);
+export async function deployContainer(rg: string, app: string, slot: string, image: string) {
+    core.info(`🐳 Deploying container to ${image} on ${app} (${slot})...`);
 
     // 1. Update configuration
     const configArgs = [

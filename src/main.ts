@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { updateContainer, deployZip, swapSlots, setAppSettings } from './azure';
+import { deployPackage, swapSlots, setAppSettings, deployContainer } from './azure';
 import { verifyHealth } from './health';
 
 async function run(): Promise<void> {
@@ -25,11 +25,9 @@ async function run(): Promise<void> {
 
         // --- Step 1: Deploy to the Initial Slot ---
         if (images) {
-            core.info(`🐳 Deploying Container to slot '${slotName}'...`);
-            await updateContainer(resourceGroup, appName, slotName, images);
+            await deployContainer(resourceGroup, appName, slotName, images);
         } else if (packagePath) {
-            core.info(`📦 Deploying Code to slot '${slotName}'...`);
-            await deployZip(resourceGroup, appName, slotName, packagePath);
+            await deployPackage(resourceGroup, appName, slotName, packagePath);
         }
         if (expectedVersion) {
             core.info(`⚙️  Setting APP_VERSION=${expectedVersion} on slot '${slotName}'...`);
